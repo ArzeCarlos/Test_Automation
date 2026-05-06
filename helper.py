@@ -9,17 +9,16 @@ def seconds_until(hour: int, minute: int = 0) -> float:
     delta = (target - now).total_seconds()
     return max(delta, 1.0)
 
-def seconds_until_interval(interval_minutes: int) -> float:
-    """Calcula los segundos hasta el próximo múltiplo del intervalo (modo intra-diario).
+def seconds_until_first_run() -> float:
+    """Calcula los segundos hasta el próximo múltiplo de 5 minutos (primera ejecución).
     
-    Ejemplo: con interval_minutes=15, ejecuta en :00, :15, :30, :45 de cada hora.
+    Ejemplo: si son las 1:38 → espera hasta las 1:40.
     """
     now = datetime.now()
-    total_minutes = now.hour * 60 + now.minute
-    next_slot = (total_minutes // interval_minutes + 1) * interval_minutes
+    next_multiple = (now.minute // 5 + 1) * 5
+    next_time = now.replace(second=0, microsecond=0) + timedelta(minutes=(next_multiple - now.minute))
+    return max((next_time - now).total_seconds(), 1.0)
 
-    next_time = now.replace(second=0, microsecond=0) + timedelta(
-        minutes=(next_slot - total_minutes)
-    )
-    delta = (next_time - now).total_seconds()
-    return max(delta, 1.0)
+def seconds_until_interval(interval_minutes: int) -> float:
+    """Espera exactamente interval_minutes desde la última ejecución."""
+    return interval_minutes * 60.0

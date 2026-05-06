@@ -8,7 +8,7 @@ from datetime import datetime
 
 from pydantic import ValidationError
 from day_schema import Schedule
-from helper import seconds_until, seconds_until_interval
+from helper import seconds_until, seconds_until_first_run, seconds_until_interval
 
 # Logging: archivo + consola
 logger = logging.getLogger()
@@ -67,13 +67,20 @@ async def task(urls: List[str], schedule: Schedule):
             logging.info("Iniciando llamadas a APIs (modo diario)")
             await call_apis(urls)
     else:
-        # Modo intra-diario: ejecuta en cada múltiplo del intervalo
+        # Modo intra-diario: primera ejecución en el próximo múltiplo de 5min,
+        # luego cada interval_minutes
         logging.info(
             f"Modo INTRA-DIARIO — ejecución cada {schedule.interval_minutes} minuto(s)"
         )
+        first = True
         while True:
-            wait_time = seconds_until_interval(schedule.interval_minutes)
-            logging.info(f"Esperando {wait_time:.0f}s hasta la siguiente ejecución")
+            if first:
+                wait_time = seconds_until_first_run()
+                logging.info(f"Esperando {wait_time:.0f}s hasta el próximo múltiplo de 5min")
+                first = False
+            else:
+                wait_time = seconds_until_interval(schedule.interval_minutes)
+                logging.info(f"Esperando {wait_time:.0f}s hasta la siguiente ejecución")
             await asyncio.sleep(wait_time)
             logging.info(
                 f"Iniciando llamadas a APIs "
