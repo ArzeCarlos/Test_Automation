@@ -8,29 +8,26 @@ from datetime import datetime
 
 from pydantic import ValidationError
 from day_schema import Schedule
-from helper import seconds_until
+from helper import seconds_until, seconds_until_interval
 
 # Logging: archivo + consola
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# Handler para archivo
 file_handler = logging.FileHandler("api_calls.log")
 file_handler.setLevel(logging.INFO)
 file_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 file_handler.setFormatter(file_formatter)
 
-# Handler para consola
 console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.INFO)
 console_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 console_handler.setFormatter(console_formatter)
 
-# Añadir handlers
 logger.addHandler(file_handler)
 logger.addHandler(console_handler)
 
-# Función async para llamar a la API y registrar fallos con detalle
+
 async def call_api(session: aiohttp.ClientSession, url: str):
     try:
         async with session.get(url, timeout=10) as response:
@@ -44,40 +41,89 @@ async def call_api(session: aiohttp.ClientSession, url: str):
         logging.error(f"Fallo en {url} a las {now}. Motivo: {error_detail}")
         return None
 
-# Función para llamar varias APIs concurrentemente
+
 async def call_apis(urls: List[str]):
     async with aiohttp.ClientSession() as session:
         tasks = [call_api(session, url) for url in urls]
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        # Revisar excepciones no manejadas
         for i, result in enumerate(results):
             if isinstance(result, Exception):
                 now = datetime.now().isoformat()
                 logging.error(f"Excepción no manejada en {urls[i]} a las {now}: {result}")
         return results
 
-# Scheduler diario
-async def task(urls: List[str], schedule: Schedule):
-    while True:
-        wait_time = seconds_until(schedule.hour, schedule.minute)
-        logging.info(f"Esperando {wait_time} segundos hasta la siguiente ejecución")
-        await asyncio.sleep(wait_time)
-        logging.info("Iniciando llamadas a APIs")
-        await call_apis(urls)
 
-# Ejecución principal con argparse
+async def task(urls: List[str], schedule: Schedule):
+    if schedule.daily:
+        # Modo diario: espera hasta la hora fijada cada 24h
+        logging.info(
+            f"Modo DIARIO — ejecución programada a las "
+            f"{schedule.hour:02d}:{schedule.minute:02d}"
+        )
+        while True:
+            wait_time = seconds_until(schedule.hour, schedule.minute)
+            logging.info(f"Esperando {wait_time:.0f}s hasta la siguiente ejecución diaria")
+            await asyncio.sleep(wait_time)
+            logging.info("Iniciando llamadas a APIs (modo diario)")
+            await call_apis(urls)
+    else:
+        # Modo intra-diario: ejecuta en cada múltiplo del intervalo
+        logging.info(
+            f"Modo INTRA-DIARIO — ejecución cada {schedule.interval_minutes} minuto(s)"
+        )
+        while True:
+            wait_time = seconds_until_interval(schedule.interval_minutes)
+            logging.info(f"Esperando {wait_time:.0f}s hasta la siguiente ejecución")
+            await asyncio.sleep(wait_time)
+            logging.info(
+                f"Iniciando llamadas a APIs "
+                f"(intervalo {schedule.interval_minutes}min)"
+            )
+            await call_apis(urls)
+
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Scheduler diario de llamadas a APIs.")
-    parser.add_argument("--hour", type=int, required=True, help="Hora de ejecución (0-23)")
-    parser.add_argument("--minute", type=int, default=0, help="Minuto de ejecución (0-59)")
+    parser = argparse.ArgumentParser(
+        description="Scheduler de llamadas a APIs (diario o intra-diario)."
+    )
+    parser.add_argument(
+        "--daily",
+        type=lambda x: x.lower() in ("true", "1", "yes"),
+        required=True,
+        help="true = modo diario, false = modo intra-diario",
+    )
+    parser.add_argument(
+        "--hour",
+        type=int,
+        default=None,
+        help="Hora de ejecución (0-23). Requerido si --daily=true",
+    )
+    parser.add_argument(
+        "--minute",
+        type=int,
+        default=0,
+        help="Minuto de ejecución (0-59). Usado con --daily=true (default: 0)",
+    )
+    parser.add_argument(
+        "--interval",
+        type=int,
+        default=None,
+        dest="interval_minutes",
+        help="Intervalo en minutos entre ejecuciones. Requerido si --daily=false",
+    )
     args = parser.parse_args()
 
     try:
-        schedule = Schedule(hour=args.hour, minute=args.minute)
+        schedule = Schedule(
+            daily=args.daily,
+            hour=args.hour,
+            minute=args.minute,
+            interval_minutes=args.interval_minutes,
+        )
         api_urls = [
-            "https://jsonplaceholder.typicode.com/posts/1",  # éxito
-            "https://jsonplaceholder.typicode.com/posts/2",  # éxito
-            "https://httpbin.org/status/500"                 # fallo intencionado
+            "https://jsonplaceholder.typicode.com/posts/1",
+            "https://jsonplaceholder.typicode.com/posts/2",
+            "https://httpbin.org/status/500",
         ]
         try:
             asyncio.run(task(api_urls, schedule))
